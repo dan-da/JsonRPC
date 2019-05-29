@@ -91,6 +91,14 @@ class HttpClient
     protected $beforeRequest;
 
     /**
+     * Callback called after the doing the request
+     *
+     * @var Closure
+     */
+    protected $afterRequest;
+    
+    
+    /**
      * HttpClient constructor
      *
      * @param  string $url
@@ -236,6 +244,21 @@ class HttpClient
     }
 
     /**
+     * Assign a callback after the request
+     *
+     * @param  Closure $closure
+     *
+     * @return $this
+     */
+    public function withAfterRequestCallback(Closure $closure)
+    {
+        $this->afterRequest = $closure;
+
+        return $this;
+    }
+    
+    
+    /**
      * Get cookies
      *
      * @return array
@@ -257,12 +280,30 @@ class HttpClient
      * @throws ConnectionFailureException
      * @throws ServerErrorException
      */
-    public function execute($payload, array $headers = [])
+    public function execute($payload, array $headers = []) {
+        $meta = $this->execute_meta($payload, $headers);
+        return $meta['response'];
+    }
+    
+    
+    /**
+     * Do the HTTP request
+     *
+     * @param string   $payload
+     * @param string[] $headers Headers for this request
+     *
+     * @return array
+     *
+     * @throws AccessDeniedException
+     * @throws ConnectionFailureException
+     * @throws ServerErrorException
+     */
+    public function execute_meta($payload, array $headers = [])
     {
         if (is_callable($this->beforeRequest)) {
             call_user_func_array($this->beforeRequest, [$this, $payload, $headers]);
         }
-
+        
         if ($this->isCurlLoaded()) {
             $ch = curl_init();
             $requestHeaders = $this->buildHeaders($headers);
@@ -287,11 +328,11 @@ class HttpClient
                 curl_setopt($ch, CURLOPT_CAINFO, $this->sslLocalCert);
             }
 
-            $response = curl_exec($ch);
+            $raw_response = curl_exec($ch);
             curl_close($ch);
 
-            if ($response !== false) {
-                $response = json_decode($response, true);
+            if ($raw_response !== false) {
+                $response = json_decode($raw_response, true);
             } else {
                 throw new ConnectionFailureException('Unable to establish a connection');
             }
@@ -304,11 +345,25 @@ class HttpClient
 
             $metadata = stream_get_meta_data($stream);
             $headers = $metadata['wrapper_data'];
-            $response = json_decode(stream_get_contents($stream), true);
+            $raw_response = stream_get_contents($stream);
+            $response = json_decode($raw_response, true);
 
             fclose($stream);
         }
 
+        $meta = [
+            'url'             => $this->url,
+            'requestHeaders'  => $requestHeaders,
+            'responseHeaders' => $headers,
+            'payload'         => $payload,
+            'raw_response'    => $raw_response,
+            'response'        => $response,
+        ];
+        
+        if (is_callable($this->afterRequest)) {
+            call_user_func_array($this->afterRequest, [$this, $response, $meta]);
+        }        
+        
         if ($this->debug) {
             error_log(sprintf(
                 '==> Request: %s%s',
@@ -330,7 +385,7 @@ class HttpClient
         $this->handleExceptions($headers);
         $this->parseCookies($headers);
 
-        return $response;
+        return $meta;
     }
 
     /**
