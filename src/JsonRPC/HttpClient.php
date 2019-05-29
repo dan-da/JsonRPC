@@ -337,7 +337,8 @@ class HttpClient
                 throw new ConnectionFailureException('Unable to establish a connection');
             }
         } else {
-            $stream = fopen(trim($this->url), 'r', false, $this->buildContext($payload, $headers));
+            $requestHeaders = $this->buildHeaders($headers);
+            $stream = fopen(trim($this->url), 'r', false, $this->buildContext($payload, $requestHeaders));
 
             if (! is_resource($stream)) {
                 throw new ConnectionFailureException('Unable to establish a connection');
@@ -371,7 +372,12 @@ class HttpClient
                 (is_string($payload) ? $payload : json_encode($payload, JSON_PRETTY_PRINT))
             ));
             error_log(sprintf(
-                '==> Headers: %s%s',
+                '==> Request Headers: %s%s',
+                PHP_EOL,
+                var_export($requestHeaders, true)
+            ));
+            error_log(sprintf(
+                '==> Response Headers: %s%s',
                 PHP_EOL,
                 var_export($headers, true)
             ));
@@ -398,8 +404,6 @@ class HttpClient
      */
     protected function buildContext($payload, array $headers = [])
     {
-        $headers = $this->buildHeaders($headers);
-
         $options = [
             'http' => [
                 'method' => 'POST',
