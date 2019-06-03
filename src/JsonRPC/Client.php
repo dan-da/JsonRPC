@@ -159,7 +159,7 @@ class Client
      *
      * @throws Exception
      */
-    public function execute($procedure, array $params = [], array $reqattrs = [], $requestId = null, array $headers = [])
+    public function execute($procedure, array $params = [], array $reqattrs = [], $requestId = null, array $headers = [], $raw_response = false)
     {
         $payload = RequestBuilder::create()
             ->withProcedure($procedure)
@@ -174,7 +174,7 @@ class Client
             return $this;
         }
 
-        return $this->sendPayload($payload, $headers);
+        return $raw_response ? $this->sendPayloadRawResponse($payload, $headers) : $this->sendPayload($payload, $headers);
     }
 
     /**
@@ -189,9 +189,28 @@ class Client
      */
     private function sendPayload($payload, array $headers = [])
     {
+        $this->httpClient->withHeaders($headers);
         return ResponseParser::create()
             ->withReturnException($this->returnException)
-            ->withPayload($this->httpClient->execute($payload, $headers))
+            ->withPayload(json_decode($this->httpClient->post($payload), true))
             ->parse();
     }
+    
+
+    /**
+     * Send payload
+     *
+     * @param  string   $payload
+     * @param  string[] $headers
+     *
+     * @return Exception|Client
+     *
+     * @throws Exception
+     */
+    private function sendPayloadRawResponse($payload, array $headers = [])
+    {
+        $this->httpClient->withHeaders($headers);
+        return $this->httpClient->post($payload);
+    }
+    
 }
