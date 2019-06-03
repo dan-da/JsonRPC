@@ -16,22 +16,22 @@ Features
 - Requirements: PHP >= 5.4
 - License: MIT
 
+This version forked by dan-da supports logging raw http requests/responses for debugging purposes
+and also returning unparsed json response to caller if desired.
+
 Author
 ------
 
 Frédéric Guillot
+
+(This forked version modified by dan-da)
 
 Installation with Composer
 --------------------------
 
 For PHP >= 5.4
 ```bash
-composer require fguillot/json-rpc
-```
-
-For PHP 5.3 (last supported version):
-```bash
-composer require fguillot/json-rpc 1.2.5
+composer require dan-da/json-rpc
 ```
 
 Examples
