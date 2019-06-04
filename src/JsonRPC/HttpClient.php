@@ -15,6 +15,19 @@ use JsonRPC\Exception\ServerErrorException;
  * @author     Andreas Goetz <cpuidle@gmx.de>
  * @author     Dan Libby <dan@osc.co.cr>  - modified to fit into jsonrpc lib
  *                                          and to improve debug capabilities.
+ *
+ *
+ * This class replaces the HttpClient class from fguillot/json-rpc.
+ * This was done in order to use fsockopen() for http requests instead
+ * of file_get_contents() or curl().   The primary benefit of fsockopen is that
+ * we can log the raw http request, headers, and server response.
+ * This was the main reason for forking this repo.
+ * 
+ * TODO: This class should be refactored to conform to the same
+ * interface as the orig HttpClass and throw the same exceptions.
+ * Only a minimal effort has been made in this direction so far and
+ * expected behavior of error conditions is basically undefined.
+ * 
  */
 
 
