@@ -192,7 +192,7 @@ class Client
         $this->httpClient->withHeaders($headers);
         return ResponseParser::create()
             ->withReturnException($this->returnException)
-            ->withPayload(json_decode($this->httpClient->post($payload), true))
+            ->withPayload($this->httpClient->execute($payload))
             ->parse();
     }
     

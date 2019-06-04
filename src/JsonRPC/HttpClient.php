@@ -2,6 +2,11 @@
 
 namespace JsonRPC;
 
+use Closure;
+use JsonRPC\Exception\AccessDeniedException;
+use JsonRPC\Exception\ConnectionFailureException;
+use JsonRPC\Exception\ServerErrorException;
+
 
 /**
  * HTTP Client
@@ -80,7 +85,7 @@ class HttpClient {
      *
      * @author Andreas Gohr <andi@splitbrain.org>
      */
-    function __construct($url){
+    function __construct($url=null){
         $this->url          = $url;
         $this->agent        = 'Mozilla/4.0 (compatible; jsonrpc-cli HTTP Client; '.PHP_OS.')';
         $this->timeout      = 15;
@@ -94,7 +99,7 @@ class HttpClient {
         $this->debug        = false;
         $this->max_bodysize = 0;
         $this->header_regexp= '';
-        if(extension_loaded('zlib')) $this->headers['Accept-encoding'] = 'gzip';
+//        if(extension_loaded('zlib')) $this->headers['Accept-encoding'] = 'gzip';
         $this->headers['Accept'] = 'text/xml,application/xml,application/xhtml+xml,'.
                                    'text/html,text/plain,image/png,image/jpeg,image/gif,*/*';
         $this->headers['Accept-Language'] = 'en-us';
@@ -126,8 +131,14 @@ class HttpClient {
      */
     function post($data){
         $url = $this->url;
-        if(!$this->sendRequest($data,'POST')) return false;
+        if(!$this->sendRequest($data,'POST')) {
+            return false;
+        }
         return $this->resp_body;
+    }
+    
+    public function execute($payload, array $headers = []) {
+        return json_decode($this->post($payload), true);
     }
 
     /**
@@ -178,7 +189,7 @@ class HttpClient {
         }else{
             $request_url = $path;
             $server      = $server;
-            if (empty($port)) $port = ($uri['scheme'] == 'https') ? 443 : 80;
+            if (empty($port)) $port = (@$uri['scheme'] == 'https') ? 443 : 80;
         }
 
         // add SSL stream prefix if needed - needs SSL support in PHP
@@ -186,7 +197,7 @@ class HttpClient {
 
         // prepare headers
         $headers               = $this->headers;
-        $headers['Host']       = $uri['host'];
+        $headers['Host']       = @$uri['host'];
         $headers['User-Agent'] = $this->agent;
         $headers['Referer']    = $this->referer;
         $headers['Connection'] = 'Close';
@@ -218,7 +229,6 @@ class HttpClient {
         // open socket
         $socket = @fsockopen($server,$port,$errno, $errstr, $this->timeout);
         if (!$socket){
-            $resp->status = '-100';
             $this->error = "Could not connect to $server:$port\n$errstr ($errno)";
             return false;
         }
@@ -597,6 +607,63 @@ class HttpClient {
         return $out;
     }
 
+    
+    /**
+     * Throw an exception according the HTTP response
+     *
+     * @param array $headers
+     *
+     * @throws AccessDeniedException
+     * @throws ConnectionFailureException
+     * @throws ServerErrorException
+     */
+    public function handleExceptions(array $headers)
+    {
+        $exceptions = [
+            '401' => '\JsonRPC\Exception\AccessDeniedException',
+            '403' => '\JsonRPC\Exception\AccessDeniedException',
+            '404' => '\JsonRPC\Exception\ConnectionFailureException',
+            '500' => '\JsonRPC\Exception\ServerErrorException',
+        ];
+
+        foreach ($headers as $header) {
+            foreach ($exceptions as $code => $exception) {
+                if (strpos($header, 'HTTP/1.0 '.$code) !== false || strpos($header, 'HTTP/1.1 '.$code) !== false) {
+                    throw new $exception('Response: '.$header);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Assign a callback before the request
+     *
+     * @param  Closure $closure
+     *
+     * @return $this
+     */
+    public function withBeforeRequestCallback(Closure $closure)
+    {
+        $this->beforeRequest = $closure;
+
+        return $this;
+    }
+
+    /**
+     * Assign a callback after the request
+     *
+     * @param  Closure $closure
+     *
+     * @return $this
+     */
+    public function withAfterRequestCallback(Closure $closure)
+    {
+        $this->afterRequest = $closure;
+
+        return $this;
+    }
+    
+    
 }
 
 //Setup VIM: ex: et ts=4 enc=utf-8 :
