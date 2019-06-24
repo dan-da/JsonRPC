@@ -5,7 +5,9 @@ namespace JsonRPC;
 use Closure;
 use JsonRPC\Exception\AccessDeniedException;
 use JsonRPC\Exception\ConnectionFailureException;
+use JsonRPC\Exception\ResponseException;
 use JsonRPC\Exception\ServerErrorException;
+use JsonRPC\Exception\HttpErrorException;
 
 
 /**
@@ -58,7 +60,6 @@ class HttpClient {
     var $start = 0; // for timings
 
     // don't set these, read on error
-    var $error;
     var $redirect_count;
 
     // read these after a successful request
@@ -117,6 +118,10 @@ class HttpClient {
                                    'text/html,text/plain,image/png,image/jpeg,image/gif,*/*';
         $this->headers['Accept-Language'] = 'en-us';
     }
+    
+    function setTimeout($timeout) {
+        $this->timeout = $timeout;
+    }
 
 
     /**
@@ -173,7 +178,6 @@ class HttpClient {
     function sendRequest($data='',$method='GET'){
         $url = $this->url;
         $this->start  = $this->_time();
-        $this->error  = '';
         $this->status = 0;
 
         // don't accept gzip if truncated bodies might occur
@@ -242,8 +246,8 @@ class HttpClient {
         // open socket
         $socket = @fsockopen($server,$port,$errno, $errstr, $this->timeout);
         if (!$socket){
-            $this->error = "Could not connect to $server:$port\n$errstr ($errno)";
-            return false;
+            $msg = "Could not connect to $server:$port\n$errstr ($errno)";
+            throw new ConnectionFailureException($msg);
         }
         //set non blocking
         stream_set_blocking($socket,0);
@@ -268,8 +272,8 @@ class HttpClient {
             $ret = fwrite($socket, substr($request,$written));
             if($ret === false){
                 $this->status = -100;
-                $this->error = 'Failed writing to socket';
-                return false;
+                $msg = 'Failed writing to socket';
+                throw new ConnectionFailureException($msg);
             }
             $written += $ret;
         }
@@ -279,13 +283,12 @@ class HttpClient {
         $r_headers = '';
         do{
             if(time()-$start > $this->timeout){
-                $this->status = -100;
-                $this->error = sprintf('Timeout while reading headers (%.3fs)',$this->_time() - $this->start);
-                return false;
+                $msg = sprintf('Timeout waiting for response headers (%.3fs)',$this->_time() - $this->start);
+                throw new ResponseException($msg);
             }
             if(feof($socket)){
-                $this->error = 'Premature End of File (socket)';
-                return false;
+                $msg = 'Premature End of File (socket)';
+                throw new ResponseException($msg);
             }
             $r_headers .= fgets($socket,1024);
         }while(!preg_match('/\r?\n\r?\n$/',$r_headers));
@@ -299,24 +302,27 @@ class HttpClient {
         }
         
         $this->_debug('response headers',$r_headers, self::level_debug);
-
+        
         // check if expected body size exceeds allowance
         if($this->max_bodysize && preg_match('/\r?\nContent-Length:\s*(\d+)\r?\n/i',$r_headers,$match)){
             if($match[1] > $this->max_bodysize){
-                $this->error = 'Reported content length exceeds allowed response size';
-                if ($this->max_bodysize_abort)
-                    return false;
+                if ($this->max_bodysize_abort) {
+                    $msg = 'Reported content length exceeds allowed response size';
+                    throw new ResponseException($msg);
+                }
             }
         }
 
         // get Status
         if (!preg_match('/^HTTP\/(\d\.\d)\s*(\d+).*?\n/', $r_headers, $m)) {
-            $this->error = 'Server returned bad answer';
-            $this->_debug($this->error, null, self::level_warn);
-            return false;
+            $msg = 'Server returned bad answer';
+            throw new ResponseException($msg);
         }
         $this->status = $m[2];
+        $header_status = $m[0];
 
+        $this->handleExceptions($this->status, $header_status);
+        
         // handle headers and cookies
         $this->resp_headers = $this->_parseHeaders($r_headers);
         if(isset($this->resp_headers['set-cookie'])){
@@ -339,13 +345,13 @@ class HttpClient {
         // check server status code to follow redirect
         if($this->status == 301 || $this->status == 302 ){
             if (empty($this->resp_headers['location'])){
-                $this->error = 'Redirect but no Location Header found';
-                $this->_debug($this->error, null, self::level_warn);
-                return false;
+                $msg = 'Redirect but no Location Header found';
+                $this->_debug($msg, null, self::level_warn);
+                throw new ResponseException($msg);
             }elseif($this->redirect_count == $this->max_redirect){
-                $this->error = 'Maximum number of redirects exceeded';
-                $this->_debug($this->error, null, self::level_warn);
-                return false;
+                $msg = 'Maximum number of redirects exceeded';
+                $this->_debug($msg, null, self::level_warn);
+                throw new ResponseException($msg);
             }else{
                 $this->redirect_count++;
                 $this->referer = $url;
@@ -366,9 +372,9 @@ class HttpClient {
 
         // check if headers are as expected
         if($this->header_regexp && !preg_match($this->header_regexp,$r_headers)){
-            $this->error = 'The received headers did not match the given regexp';
-            $this->_debug($this->error, null, self::level_warn);
-            return false;
+            $msg = 'The received headers did not match the given regexp';
+            $this->_debug($msg, null, self::level_warn);
+            throw new ResponseException($msg);
         }
 
         //read body (with chunked encoding if needed)
@@ -378,15 +384,14 @@ class HttpClient {
                 unset($chunk_size);
                 do {
                     if(feof($socket)){
-                        $this->error = 'Premature End of File (socket)';
-                        $this->_debug($this->error, null, self::level_warn);
-                        return false;
+                        $msg = 'Premature End of File (socket)';
+                        $this->_debug($msg, null, self::level_warn);
+                        throw new ResponseException($msg);
                     }
                     if(time()-$start > $this->timeout){
-                        $this->status = -100;
-                        $this->error = sprintf('Timeout while reading chunk (%.3fs)',$this->_time() - $this->start);
-                        $this->_debug($this->error, null, self::level_warn);
-                        return false;
+                        $msg = sprintf('Timeout while reading chunk (%.3fs)',$this->_time() - $this->start);
+                        $this->_debug($msg, null, self::level_warn);
+                        throw new ResponseException($msg);
                     }
                     $byte = fread($socket,1);
                     $chunk_size .= $byte;
@@ -401,10 +406,10 @@ class HttpClient {
                 }
 
                 if($this->max_bodysize && strlen($r_body) > $this->max_bodysize){
-                    $this->error = 'Allowed response size exceeded';
-                    $this->_debug($this->error, null, self::level_warn);
+                    $msg = 'Allowed response size exceeded';
+                    $this->_debug($msg, null, self::level_warn);
                     if ($this->max_bodysize_abort)
-                        return false;
+                        throw new ResponseException($msg);
                     else
                         break;
                 }
@@ -414,19 +419,21 @@ class HttpClient {
             while (!feof($socket)) {
                 if(time()-$start > $this->timeout){
                     $this->status = -100;
-                    $this->error = sprintf('Timeout while reading response (%.3fs)',$this->_time() - $this->start);
-                    $this->_debug($this->error, null, self::level_warn);
-                    return false;
+                    $msg = sprintf('Timeout while reading response (%.3fs)',$this->_time() - $this->start);
+                    $this->_debug($msg, null, self::level_warn);
+                    throw new ResponseException($msg);
                 }
                 $r_body .= fread($socket,4096);
                 $r_size = strlen($r_body);
                 if($this->max_bodysize && $r_size > $this->max_bodysize){
-                    $this->error = 'Allowed response size exceeded';
-                    $this->_debug($this->error, null, self::level_warn);
-                    if ($this->max_bodysize_abort)
-                        return false;
-                    else
+                    $msg = 'Allowed response size exceeded';
+                    $this->_debug($msg, null, self::level_warn);
+                    if ($this->max_bodysize_abort) {
+                        throw new ResponseException($msg);
+                    }
+                    else {
                         break;
+                    }
                 }
                 if(isset($this->resp_headers['content-length']) &&
                    !isset($this->resp_headers['transfer-encoding']) &&
@@ -624,27 +631,30 @@ class HttpClient {
     /**
      * Throw an exception according the HTTP response
      *
-     * @param array $headers
+     * @param string $status
      *
      * @throws AccessDeniedException
      * @throws ConnectionFailureException
      * @throws ServerErrorException
      */
-    public function handleExceptions(array $headers)
+    public function handleExceptions($code, $response)
     {
         $exceptions = [
-            '401' => '\JsonRPC\Exception\AccessDeniedException',
+            '401' => '\JsonRPC\Exception\AuthenticationFailureException',
             '403' => '\JsonRPC\Exception\AccessDeniedException',
-            '404' => '\JsonRPC\Exception\ConnectionFailureException',
+            '404' => '\JsonRPC\Exception\NotFoundException',
             '500' => '\JsonRPC\Exception\ServerErrorException',
         ];
-
-        foreach ($headers as $header) {
-            foreach ($exceptions as $code => $exception) {
-                if (strpos($header, 'HTTP/1.0 '.$code) !== false || strpos($header, 'HTTP/1.1 '.$code) !== false) {
-                    throw new $exception('Response: '.$header);
-                }
-            }
+        
+        $code = (string)$code;
+        $response = trim($response);
+        
+        $exception = @$exceptions[$code];
+        if( $exception ) {
+            throw new $exception($response, $code);
+        }
+        else if( $code != 200) {
+            throw new HttpErrorException($response, $code);
         }
     }
     
