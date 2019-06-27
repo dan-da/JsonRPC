@@ -80,7 +80,7 @@ class ResponseParser
      * @throws Exception
      * @throws ResponseException
      */
-    public function parse()
+    public function parse($resultonly=true)
     {
         JsonFormatValidator::validate($this->payload);
 
@@ -91,7 +91,7 @@ class ResponseParser
                 $results[] = self::create()
                     ->withReturnException($this->returnException)
                     ->withPayload($response)
-                    ->parse();
+                    ->parse($resultonly);
             }
 
             return $results;
@@ -107,8 +107,10 @@ class ResponseParser
                 throw $e;
             }
         }
-
-        return isset($this->payload['result']) ? $this->payload['result'] : null;
+        if($resultonly) {
+            return isset($this->payload['result']) ? $this->payload['result'] : null;
+        }
+        return $this->payload;
     }
 
     /**

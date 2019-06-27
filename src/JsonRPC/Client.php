@@ -159,7 +159,7 @@ class Client
      *
      * @throws Exception
      */
-    public function execute($procedure, array $params = [], array $reqattrs = [], $requestId = null, array $headers = [], $raw_response = false)
+    public function execute($procedure, array $params = [], array $reqattrs = [], $requestId = null, array $headers = [], $raw_response = false, $resultonly=true)
     {
         $payload = RequestBuilder::create()
             ->withProcedure($procedure)
@@ -174,7 +174,7 @@ class Client
             return $this;
         }
 
-        return $raw_response ? $this->sendPayloadRawResponse($payload, $headers) : $this->sendPayload($payload, $headers);
+        return $raw_response ? $this->sendPayloadRawResponse($payload, $headers) : $this->sendPayload($payload, $headers, $resultonly);
     }
 
     /**
@@ -187,13 +187,13 @@ class Client
      *
      * @throws Exception
      */
-    private function sendPayload($payload, array $headers = [])
+    private function sendPayload($payload, array $headers = [], $resultonly=true)
     {
         $this->httpClient->withHeaders($headers);
         return ResponseParser::create()
             ->withReturnException($this->returnException)
             ->withPayload($this->httpClient->execute($payload))
-            ->parse();
+            ->parse($resultonly);
     }
     
 
